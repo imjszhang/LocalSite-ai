@@ -35,6 +35,7 @@ interface GenerationViewProps {
   isGenerating: boolean
   generationComplete: boolean
   onRegenerateWithNewPrompt: (newPrompt: string) => void
+  onContinueGeneration: () => void
   thinkingOutput?: string
   isThinking?: boolean
 }
@@ -48,6 +49,7 @@ export function GenerationView({
   isGenerating,
   generationComplete,
   onRegenerateWithNewPrompt,
+  onContinueGeneration,
   thinkingOutput = "",
   isThinking = false
 }: GenerationViewProps) {
@@ -257,6 +259,18 @@ export function GenerationView({
               <Download className="w-4 h-4 mr-1" />
               <span className="hidden sm:inline">Export</span>
             </Button>
+            {generationComplete && generatedCode && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
+                disabled={isGenerating}
+                onClick={onContinueGeneration}
+              >
+                <ArrowRight className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">继续生成</span>
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -334,6 +348,18 @@ export function GenerationView({
                       <Copy className="w-4 h-4 mr-1" />
                       {copySuccess ? "Copied!" : "Copy"}
                     </Button>
+                    {generationComplete && generatedCode && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-gray-400 hover:text-white"
+                        onClick={onContinueGeneration}
+                        disabled={isGenerating}
+                      >
+                        <ArrowRight className="w-4 h-4 mr-1" />
+                        继续
+                      </Button>
+                    )}
                   </div>
                 </div>
                 <div className="flex-1 overflow-hidden">

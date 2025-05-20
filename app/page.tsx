@@ -343,6 +343,193 @@ IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown 
     }
   }
 
+  // 继续生成代码的函数
+  const handleContinueGeneration = async () => {
+    if (!selectedModel || !selectedProvider) {
+      toast.error("请选择提供商和模型。")
+      return
+    }
+
+    setIsGenerating(true)
+    // 保留已生成的代码作为上下文
+    const existingCode = generatedCode
+    
+    try {
+      const response = await fetch('/api/generate-code', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          // 构建指示继续完成的提示
+          prompt: `继续完成以下HTML代码，保持一致的风格和结构。代码当前可能不完整，请确保完成后是一个完整的、功能正常的网页：\n\n${existingCode}`,
+          model: selectedModel,
+          provider: selectedProvider,
+          maxTokens: maxTokens,
+          customSystemPrompt: "你是一位专业网页开发者。请继续完成用户提供的不完整代码，确保结果是功能完整的HTML文件。请输出继续的代码部分，不要重新开始或完全重写。确保生成的代码可以正确衔接已有内容。",
+        }),
+      })
+
+      // Check if the response is not OK
+      if (!response.ok) {
+        // Try to extract error message from the response
+        try {
+          const errorData = await response.json()
+          if (errorData && errorData.error) {
+            throw new Error(errorData.error)
+          }
+        } catch (jsonError) {
+          // If we can't parse the JSON, just use the status
+        }
+
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      // Process the stream
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('Stream could not be read')
+      }
+
+      let receivedText = ""
+      let thinkingText = ""
+      let isInThinkingBlock = false
+
+      // Read the stream chunk by chunk
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) {
+          break
+        }
+
+        // Convert the chunk to text and add it to the received text
+        const chunk = new TextDecoder().decode(value)
+        receivedText += chunk
+
+        // Process thinking tokens
+        let cleanedCode = receivedText
+
+        // Check for thinking blocks
+        const thinkingStartIndex = cleanedCode.indexOf("<think>")
+        const thinkingEndIndex = cleanedCode.indexOf("</think>")
+
+        if (thinkingStartIndex !== -1) {
+          // Set thinking state to true when we first see <think>
+          if (!isInThinkingBlock) {
+            setIsThinking(true)
+          }
+
+          isInThinkingBlock = true
+
+          // Extract thinking content
+          if (thinkingEndIndex !== -1) {
+            // Complete thinking block
+            thinkingText = cleanedCode.substring(thinkingStartIndex + 7, thinkingEndIndex)
+
+            // Remove thinking block from code
+            cleanedCode = cleanedCode.substring(0, thinkingStartIndex) +
+                          cleanedCode.substring(thinkingEndIndex + 8)
+
+            isInThinkingBlock = false
+
+            // Set thinking state to false when we see </think>
+            setIsThinking(false)
+          } else {
+            // Partial thinking block
+            thinkingText = cleanedCode.substring(thinkingStartIndex + 7)
+
+            // Remove partial thinking block from code
+            cleanedCode = cleanedCode.substring(0, thinkingStartIndex)
+          }
+
+          setThinkingOutput(thinkingText)
+        } else if (isInThinkingBlock && thinkingEndIndex !== -1) {
+          // End of thinking block found
+          thinkingText = cleanedCode.substring(0, thinkingEndIndex)
+
+          // Remove thinking block from code
+          cleanedCode = cleanedCode.substring(thinkingEndIndex + 8)
+
+          isInThinkingBlock = false
+
+          // Set thinking state to false when we see </think>
+          setIsThinking(false)
+
+          setThinkingOutput(thinkingText)
+        }
+
+        // Remove markdown formatting if present
+        cleanedCode = cleanedCode.replace(/^```html\n/, '')
+        cleanedCode = cleanedCode.replace(/```$/, '')
+
+        // 关键区别：将新生成的代码与已有代码合并
+        // 需要智能判断如何合并
+        let completeCode = existingCode
+        
+        // 智能合并逻辑 - 避免重复标签
+        if (cleanedCode.trim().startsWith('<!DOCTYPE') || 
+            cleanedCode.trim().startsWith('<html') || 
+            cleanedCode.trim().startsWith('<HTML')) {
+          // 如果返回的是完整HTML，尝试提取新增的部分
+          const bodyStartIdx = cleanedCode.indexOf('<body')
+          const bodyEndIdx = cleanedCode.lastIndexOf('</body>')
+          
+          if (bodyStartIdx !== -1 && bodyEndIdx !== -1) {
+            // 提取body内容
+            const bodyContent = cleanedCode.substring(
+              cleanedCode.indexOf('>', bodyStartIdx) + 1,
+              bodyEndIdx
+            )
+            
+            // 在现有代码的</body>前插入
+            const existingBodyEnd = completeCode.lastIndexOf('</body>')
+            if (existingBodyEnd !== -1) {
+              completeCode = completeCode.substring(0, existingBodyEnd) + 
+                             bodyContent + 
+                             completeCode.substring(existingBodyEnd)
+            } else {
+              completeCode += bodyContent
+            }
+          } else {
+            // 无法识别body标签，直接附加
+            completeCode += cleanedCode
+          }
+        } else {
+          // 直接附加非完整HTML
+          completeCode += cleanedCode
+        }
+        
+        setGeneratedCode(completeCode)
+      }
+
+      setGenerationComplete(true)
+    } catch (error) {
+      console.error('Error continuing code generation:', error)
+
+      // Display specific error messages based on the provider and error message
+      if (error instanceof Error) {
+        const errorMessage = error.message
+
+        if (errorMessage.includes('Ollama')) {
+          toast.error('无法连接Ollama。服务器是否正在运行？')
+        } else if (errorMessage.includes('LM Studio')) {
+          toast.error('无法连接LM Studio。服务器是否正在运行？')
+        } else if (selectedProvider === 'deepseek' || selectedProvider === 'openai_compatible') {
+          // For cloud providers, show a message about API keys
+          toast.error('请确保您的.env.local文件中的Base URL和API Keys正确。')
+        } else {
+          // Generic fallback message
+          toast.error('生成代码时出错。请稍后再试。')
+        }
+      } else {
+        toast.error('生成代码时出错。请稍后再试。')
+      }
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   if (isLoading) {
     return <LoadingScreen />
   }
@@ -361,6 +548,7 @@ IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown 
           isGenerating={isGenerating}
           generationComplete={generationComplete}
           onRegenerateWithNewPrompt={handleRegenerateWithNewPrompt}
+          onContinueGeneration={handleContinueGeneration}
           thinkingOutput={thinkingOutput}
           isThinking={isThinking}
         />
