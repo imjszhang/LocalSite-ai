@@ -5,14 +5,33 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       - HOST=0.0.0.0
-      # Choose the default provider (ollama or lm_studio)
-      - DEFAULT_PROVIDER=lm_studio
-    # volumes:
-    #   - ./:/app
-    extra_hosts:
-      # Important: Allows access to the host machine
-      - "host.docker.internal:host-gateway"
+      # DeepSeek API
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_API_BASE=${DEEPSEEK_API_BASE}
+      # Custom OpenAI-compatible API
+      - OPENAI_COMPATIBLE_API_KEY=${OPENAI_COMPATIBLE_API_KEY}
+      - OPENAI_COMPATIBLE_API_BASE=${OPENAI_COMPATIBLE_API_BASE}
+      # Ollama Configuration (Local AI models)
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE}
+      # LM Studio Configuration (Local AI models)
+      - LM_STUDIO_API_BASE=${LM_STUDIO_API_BASE}
+      # Default Provider (deepseek, openai_compatible, ollama, lm_studio)
+      - DEFAULT_PROVIDER=${DEFAULT_PROVIDER}
+    volumes:
+      - ./.env:/app/.env.local
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.localsite-ai.rule=Host(`${DOMAIN:-localsite-ai.localhost}`)"
+      - "traefik.http.routers.localsite-ai.entrypoints=web"
+      - "traefik.http.services.localsite-ai.loadbalancer.server.port=3000"
+      - "traefik.docker.network=dokploy-network"
+
+networks:
+  dokploy-network:
+    external: true 
