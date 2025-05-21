@@ -5,7 +5,7 @@ import { debounce } from "lodash"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 // Import only the icons that are actually used
-import { Laptop, Smartphone, Tablet, Copy, Download, RefreshCw, Loader2, Save, ArrowRight } from "lucide-react"
+import { Laptop, Smartphone, Tablet, Copy, Download, RefreshCw, Loader2, Save, ArrowRight, Wand2 } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import { ThinkingIndicator } from "@/components/thinking-indicator"
 import { Button } from "@/components/ui/button"
@@ -64,9 +64,47 @@ export function GenerationView({
   const [previewContent, setPreviewContent] = useState("") // For debounced preview content
   const [showSaveDialog, setShowSaveDialog] = useState(false) // For the save dialog
   const [newPrompt, setNewPrompt] = useState("") // Für das neue Prompt-Eingabefeld
+  const [autoContinueEnabled, setAutoContinueEnabled] = useState(true) // 自动继续生成功能开关
+  const [showAutoContinueIndicator, setShowAutoContinueIndicator] = useState(false) // 自动继续指示器
 
   // Previous preview content for transition effect
   const prevContentRef = useRef<string>("");
+  
+  // 检查HTML代码是否需要继续生成
+  const checkIfCodeNeedsContinuation = (code: string): boolean => {
+    if (!code || isGenerating || !autoContinueEnabled) return false;
+    
+    // 简化逻辑：只检查是否包含</html>结束标签
+    const hasHtmlEnd = code.includes('</html>') || code.includes('</HTML>');
+    
+    // 如果有HTML结束标签，则不需要继续生成
+    return !hasHtmlEnd;
+  };
+  
+  // 当代码生成完成时，检查是否需要自动继续生成
+  useEffect(() => {
+    // 仅在生成完成且未在生成中时检查
+    if (generationComplete && !isGenerating && generatedCode) {
+      // 添加一个小延迟，确保UI更新完成
+      const timer = setTimeout(() => {
+        if (checkIfCodeNeedsContinuation(generatedCode)) {
+          console.log("检测到代码不完整，自动继续生成...");
+          
+          // 显示自动继续提示
+          setShowAutoContinueIndicator(true);
+          
+          // 2秒后隐藏提示
+          setTimeout(() => {
+            setShowAutoContinueIndicator(false);
+          }, 2000);
+          
+          onContinueGeneration();
+        }
+      }, 800); // 800ms延迟，给用户一个短暂的时间窗口看到当前生成结果
+      
+      return () => clearTimeout(timer);
+    }
+  }, [generationComplete, isGenerating, generatedCode, onContinueGeneration]);
 
   // Function to prepare HTML content with dark mode styles
   const prepareHtmlContent = (code: string): string => {
@@ -215,65 +253,93 @@ export function GenerationView({
 
   return (
     <div className="h-screen bg-black text-white flex flex-col overflow-hidden">
+      {/* 自动继续指示器 */}
+      {showAutoContinueIndicator && (
+        <div className="fixed bottom-4 left-4 z-50 bg-blue-600/90 text-white px-3 py-2 rounded-lg text-sm flex items-center gap-2 animate-in fade-in duration-300">
+          <Wand2 className="w-4 h-4 animate-spin" />
+          <span>检测到不完整代码，自动继续生成中...</span>
+        </div>
+      )}
+      
       {/* Header - Kompakter gestaltet */}
       <header className="border-b border-gray-800 py-2 px-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-white">
-              {provider === 'deepseek' ? 'DEEPSEEK' :
-               provider === 'openai_compatible' ? 'CUSTOM API' :
-               provider === 'ollama' ? 'OLLAMA' :
-               provider === 'lm_studio' ? 'LM STUDIO' : 'AI'}
-            </h1>
-            <Badge variant="outline" className="bg-gray-900 text-white border-white">
-              {model}
-            </Badge>
-            {thinkingOutput && (
-              <div className="ml-2">
-                <ThinkingIndicator
-                  thinkingOutput={thinkingOutput}
-                  isThinking={isThinking}
-                  position="top-left"
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-white">
+                {provider === 'deepseek' ? 'DEEPSEEK' :
+                 provider === 'openai_compatible' ? 'CUSTOM API' :
+                 provider === 'ollama' ? 'OLLAMA' :
+                 provider === 'lm_studio' ? 'LM STUDIO' : 'AI'}
+              </h1>
+              <Badge variant="outline" className="bg-gray-900 text-white border-white">
+                {model}
+              </Badge>
+              {thinkingOutput && (
+                <div className="ml-2">
+                  <ThinkingIndicator
+                    thinkingOutput={thinkingOutput}
+                    isThinking={isThinking}
+                    position="top-left"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center mr-2">
+                <span className="text-xs text-gray-400 mr-2">自动继续</span>
+                <Switch
+                  checked={autoContinueEnabled}
+                  onCheckedChange={setAutoContinueEnabled}
+                  className="data-[state=checked]:bg-blue-600"
                 />
               </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
-              disabled={isGenerating}
-              onClick={() => window.location.reload()}
-            >
-              <RefreshCw className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Restart</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
-              disabled={!generatedCode || isGenerating}
-              onClick={downloadCode}
-            >
-              <Download className="w-4 h-4 mr-1" />
-              <span className="hidden sm:inline">Export</span>
-            </Button>
-            {generationComplete && generatedCode && (
               <Button
                 variant="outline"
                 size="sm"
                 className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
                 disabled={isGenerating}
-                onClick={onContinueGeneration}
+                onClick={() => window.location.reload()}
               >
-                <ArrowRight className="w-4 h-4 mr-1" />
-                <span className="hidden sm:inline">继续生成</span>
+                <RefreshCw className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Restart</span>
               </Button>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
+                disabled={!generatedCode || isGenerating}
+                onClick={downloadCode}
+              >
+                <Download className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Export</span>
+              </Button>
+              {generationComplete && generatedCode && !autoContinueEnabled && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 h-8"
+                  disabled={isGenerating}
+                  onClick={onContinueGeneration}
+                >
+                  <ArrowRight className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">继续生成</span>
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </header>
+
+      {/* 移动端自动继续切换开关 */}
+      <div className="md:hidden flex items-center justify-between border-b border-gray-800 bg-gray-900/50 px-3 py-1">
+        <span className="text-xs text-gray-400">自动继续生成</span>
+        <Switch
+          checked={autoContinueEnabled}
+          onCheckedChange={setAutoContinueEnabled}
+          className="data-[state=checked]:bg-blue-600"
+        />
+      </div>
 
       {/* Mobile Tab-Navigation */}
       <div className="md:hidden flex border-b border-gray-800 bg-gray-900/50">
@@ -348,7 +414,7 @@ export function GenerationView({
                       <Copy className="w-4 h-4 mr-1" />
                       {copySuccess ? "Copied!" : "Copy"}
                     </Button>
-                    {generationComplete && generatedCode && (
+                    {generationComplete && generatedCode && !autoContinueEnabled && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -581,6 +647,18 @@ export function GenerationView({
                         <Copy className="w-4 h-4 mr-1" />
                         {copySuccess ? "Copied!" : "Copy"}
                       </Button>
+                      {generationComplete && generatedCode && !autoContinueEnabled && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-gray-400 hover:text-white"
+                          onClick={onContinueGeneration}
+                          disabled={isGenerating}
+                        >
+                          <ArrowRight className="w-4 h-4 mr-1" />
+                          继续
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden">

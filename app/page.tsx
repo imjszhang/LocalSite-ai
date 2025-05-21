@@ -504,6 +504,12 @@ IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown 
       }
 
       setGenerationComplete(true)
+      // 添加调试信息，指示这是自动继续生成
+      if (existingCode === generatedCode) {
+        console.log("代码未变化，可能需要再次继续生成");
+      } else {
+        console.log("继续生成完成，代码已更新");
+      }
     } catch (error) {
       console.error('Error continuing code generation:', error)
 
