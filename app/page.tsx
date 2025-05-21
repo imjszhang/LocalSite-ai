@@ -362,7 +362,7 @@ IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown 
         },
         body: JSON.stringify({
           // 构建指示继续完成的提示
-          prompt: `原始需求: ${prompt}\n\n继续完成以下HTML代码，保持一致的风格和结构。代码当前可能不完整，请确保完成后是一个完整的、功能正常的网页：\n\n${existingCode}`,
+          prompt: `<原始需求>\n ${prompt}\n</原始需求>\n\n根据原始需求，继续完成以下HTML代码，保持一致的风格和结构。代码当前可能不完整，请确保完成后是一个完整的、功能正常的网页：\n\n${existingCode}`,
           model: selectedModel,
           provider: selectedProvider,
           maxTokens: maxTokens,
