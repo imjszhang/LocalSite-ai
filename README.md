@@ -50,7 +50,7 @@ A modern web application that uses AI to generate HTML, CSS, and JavaScript code
    # Choose one of the following providers:
 
    # DeepSeek API
-   DEEPSEEK_API_KEY=your_deepseek_api_key_here
+   DEEPSEEK_API_KEY=your_deepseek_api_key
    DEEPSEEK_API_BASE=https://api.deepseek.com/v1
 
    # Custom OpenAI-compatible API
@@ -59,6 +59,9 @@ A modern web application that uses AI to generate HTML, CSS, and JavaScript code
 
    # Default Provider (deepseek, openai_compatible, ollama, lm_studio)
    DEFAULT_PROVIDER=lm_studio
+   
+   # Default Model (optional, must be available from your provider)
+   # DEFAULT_MODEL=llama3
    ```
 
 4. Start the development server:
@@ -139,6 +142,11 @@ The application can also be deployed on:
 - Any platform that supports Next.js applications
 
 **Keep in Mind that if you host it on a platform, (like Vercel, Netlify, etc.) you can not use local models through Ollama or LM Studio, unless using something like Tunneling via [ngrok](https://ngrok.com).**
+
+### Environment Variables
+
+- `DEFAULT_PROVIDER` - Sets the default AI provider (deepseek, openai_compatible, ollama, lm_studio)
+- `DEFAULT_MODEL` - Sets the default model to use (must be available from your selected provider)
 
 ## Usage
 

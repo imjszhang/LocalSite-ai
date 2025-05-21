@@ -85,9 +85,42 @@ export function WelcomeView({
 
         setModels(data)
 
-        // Automatically select the first model if available
-        if (data.length > 0) {
-          setSelectedModel(data[0].id)
+        // 获取默认模型信息
+        try {
+          const defaultResponse = await fetch('/api/get-default-provider')
+          if (defaultResponse.ok) {
+            const { defaultModel } = await defaultResponse.json()
+            
+            if (defaultModel) {
+              // 检查默认模型是否在可用模型列表中
+              const modelExists = data.some((m: Model) => m.id === defaultModel)
+              
+              if (modelExists) {
+                setSelectedModel(defaultModel)
+              } else {
+                // 如果默认模型不可用，回退到第一个模型
+                if (data.length > 0) {
+                  setSelectedModel(data[0].id)
+                }
+              }
+            } else {
+              // 如果没有设置默认模型，使用第一个模型
+              if (data.length > 0) {
+                setSelectedModel(data[0].id)
+              }
+            }
+          } else {
+            // API请求失败，回退到第一个模型
+            if (data.length > 0) {
+              setSelectedModel(data[0].id)
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching default model:', error)
+          // 出错时，回退到第一个模型
+          if (data.length > 0) {
+            setSelectedModel(data[0].id)
+          }
         }
       } catch (error) {
         console.error('Error fetching models:', error)
