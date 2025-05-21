@@ -21,6 +21,7 @@ services:
       - LM_STUDIO_API_BASE=${LM_STUDIO_API_BASE}
       # Default Provider (deepseek, openai_compatible, ollama, lm_studio)
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER}
+      - DEFAULT_MODEL=${DEFAULT_MODEL}
     volumes:
       - ./.env:/app/.env.local
     networks:
