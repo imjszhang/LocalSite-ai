@@ -362,11 +362,11 @@ IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown 
         },
         body: JSON.stringify({
           // 构建指示继续完成的提示
-          prompt: `<原始需求>\n ${prompt}\n</原始需求>\n\n根据原始需求，继续完成以下HTML代码，保持一致的风格和结构。代码当前可能不完整，请确保完成后是一个完整的、功能正常的网页：\n\n${existingCode}`,
+          prompt: `继续按照原始需求完成以下HTML代码，保持一致的风格和结构。\n\n${existingCode}`,
           model: selectedModel,
           provider: selectedProvider,
           maxTokens: maxTokens,
-          customSystemPrompt: "你是一位专业网页开发者。请继续完成用户提供的不完整代码，确保结果是功能完整的HTML文件。请输出继续的代码部分，不要重新开始或完全重写。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.",
+          customSystemPrompt: `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.\n原始需求：\n\n${prompt}\n\n`,
         }),
       })
 
