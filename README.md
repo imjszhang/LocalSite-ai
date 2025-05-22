@@ -158,15 +158,7 @@ The application can also be deployed on:
 6. Toggle edit mode to modify the code if needed.
 7. Copy the code or download it as an HTML file.
 
-## Roadmap
-
-### AI Models and Providers
-- [x] Integration with [Ollama](https://ollama.ai) for local model execution
-- [x] Support for [LM Studio](https://lmstudio.ai) to use local models
-- [x] Predefined provider: DeepSeek
-- [x] Custom OpenAI-compatible API support
-- [x] Support thinking models (Qwen3,DeepCoder, etc.)
-- [ ] Adding more predefined providers (Anthropic, Groq, etc.)
+## API 支持
 
 ### Advanced Code Generation
 - [ ] Choose between different Frameworks and Libraries (React, Vue, Angular, etc.)
