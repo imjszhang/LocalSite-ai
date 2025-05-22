@@ -3,6 +3,9 @@
 # dependencies
 /node_modules
 
+# work_dir
+work_dir/
+
 # next.js
 /.next/
 /out/
