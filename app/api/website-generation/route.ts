@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       apiKey,
       continuationMode = false,
       existingCode = '',
-      maxContinuationAttempts = 2  // 最大继续生成尝试次数
+      maxContinuationAttempts = 10  // 最大继续生成尝试次数
     } = await request.json();
 
     // 验证必需的参数
