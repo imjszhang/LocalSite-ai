@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+// 修改dotenv配置，指定.env.local文件
+require('dotenv').config({ path: path.resolve(process.cwd(), '.env.local') });
 
 // 解析命令行参数
 const args = process.argv.slice(2);
@@ -9,8 +11,8 @@ const helpText = `
 
 选项:
   --prompt, -p        要生成的网站描述 (必需)
-  --model, -m         要使用的AI模型 (必需)
-  --provider          AI提供商 (可选: deepseek, openai_compatible, ollama, lm_studio)
+  --model, -m         要使用的AI模型 (如未提供，将使用.env.local中的DEFAULT_MODEL)
+  --provider          AI提供商 (如未提供，将使用.env.local中的DEFAULT_PROVIDER)
   --system-prompt     自定义系统提示 (可选)
   --max-tokens        生成的最大令牌数 (可选)
   --output, -o        输出HTML文件路径 (可选, 默认: ./generated_website.html)
@@ -18,11 +20,15 @@ const helpText = `
   --help, -h          显示此帮助信息
 `;
 
+// 从环境变量获取默认值
+const DEFAULT_PROVIDER = process.env.DEFAULT_PROVIDER;
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL;
+
 // 参数默认值
 let options = {
   prompt: null,
-  model: null,
-  provider: null,
+  model: DEFAULT_MODEL || null,
+  provider: DEFAULT_PROVIDER || null,
   systemPrompt: null,
   maxTokens: null,
   output: './generated_website.html',
@@ -60,8 +66,9 @@ if (!options.prompt) {
   process.exit(1);
 }
 
+// 模型参数验证逻辑修改 - 如果命令行和环境变量都没有提供模型，才报错
 if (!options.model) {
-  console.error('错误: 必须提供AI模型 (--model 或 -m)');
+  console.error('错误: 必须提供AI模型 (--model 或 -m)，或在.env.local文件中设置DEFAULT_MODEL');
   console.log(helpText);
   process.exit(1);
 }
