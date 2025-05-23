@@ -110,37 +110,62 @@ export async function POST(request: NextRequest) {
     // 使用自定义系统提示或默认提示
     const systemPromptToUse = systemPrompt || SYSTEM_PROMPT;
 
-    // 创建流式输出变换器，处理完整性检查和自动继续生成
-    const transformStream = new TransformStream({
-      async transform(chunk, controller) {
-        // 传递当前块
-        controller.enqueue(chunk);
-      },
-    });
-
-    // 初始生成
-    let stream = await providerClient.generateCode(prompt, modelToUse, systemPromptToUse, parsedMaxTokens);
-    
-    // 创建响应
-    const response = new Response(stream, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'Access-Control-Allow-Origin': '*'
-      },
-    });
-
-    // 处理完整性检查和自动继续生成
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('无法读取生成流');
-    }
-
     // 创建新的流来处理完整性检查和自动继续生成
     const processedStream = new ReadableStream({
       async start(controller) {
         let fullContent = continuationMode ? existingCode : '';
         let continuationAttempts = 0;
+        let thinkingOutput = '';
+        let isInThinkingBlock = false;
+        
+        // 辅助函数：处理思考块和清理代码（从page.tsx移植）
+        function processThinkingAndCleanCode(receivedText: string) {
+          let cleanedCode = receivedText;
+          let extractedThinking = '';
+
+          // 检查思考块
+          const thinkingStartIndex = cleanedCode.indexOf("<think>");
+          const thinkingEndIndex = cleanedCode.indexOf("</think>");
+
+          if (thinkingStartIndex !== -1) {
+            isInThinkingBlock = true;
+
+            // 提取思考内容
+            if (thinkingEndIndex !== -1) {
+              // 完整的思考块
+              extractedThinking = cleanedCode.substring(thinkingStartIndex + 7, thinkingEndIndex);
+
+              // 从代码中移除思考块
+              cleanedCode = cleanedCode.substring(0, thinkingStartIndex) +
+                            cleanedCode.substring(thinkingEndIndex + 8);
+
+              isInThinkingBlock = false;
+            } else {
+              // 部分思考块
+              extractedThinking = cleanedCode.substring(thinkingStartIndex + 7);
+
+              // 从代码中移除部分思考块
+              cleanedCode = cleanedCode.substring(0, thinkingStartIndex);
+            }
+
+            thinkingOutput += extractedThinking;
+          } else if (isInThinkingBlock && thinkingEndIndex !== -1) {
+            // 思考块结束
+            extractedThinking = cleanedCode.substring(0, thinkingEndIndex);
+
+            // 从代码中移除思考块
+            cleanedCode = cleanedCode.substring(thinkingEndIndex + 8);
+
+            isInThinkingBlock = false;
+            thinkingOutput += extractedThinking;
+          }
+
+          // 移除markdown格式
+          cleanedCode = cleanedCode.replace(/^```html\n/, '');
+          cleanedCode = cleanedCode.replace(/```$/, '');
+
+          return { cleanedCode, thinkingOutput: extractedThinking };
+        }
         
         // 辅助函数：继续生成
         async function continueGeneration() {
@@ -153,9 +178,9 @@ export async function POST(request: NextRequest) {
           console.log(`进行第 ${continuationAttempts} 次继续生成`);
           
           try {
-            // 构建继续生成的提示
+            // 构建继续生成的提示（使用page.tsx中的逻辑）
             const continuationPrompt = `继续按照原始需求完成以下HTML代码，保持一致的风格和结构。\n\n${fullContent}`;
-            const continuationSystemPrompt = `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file.\n原始需求：\n\n${prompt}\n\n`;
+            const continuationSystemPrompt = `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.\n原始需求：\n\n${prompt}\n\n`;
             
             // 生成继续的代码
             const continuationStream = await providerClient.generateCode(continuationPrompt, modelToUse, continuationSystemPrompt, parsedMaxTokens);
@@ -180,63 +205,58 @@ export async function POST(request: NextRequest) {
               const textChunk = new TextDecoder().decode(value);
               continuationContent += textChunk;
               
+              // 处理思考块和清理代码
+              const { cleanedCode } = processThinkingAndCleanCode(continuationContent);
+              
               // 发送增量更新
               controller.enqueue(value);
             }
             
-            // 清理继续生成的代码
-            const cleanedContinuation = cleanGeneratedCode(continuationContent);
+            // 最终处理继续生成的代码
+            const { cleanedCode: finalCleanedContinuation } = processThinkingAndCleanCode(continuationContent);
             
-            // 智能合并逻辑 - 避免重复内容
-            if (cleanedContinuation.trim().startsWith('<!DOCTYPE') || 
-                cleanedContinuation.trim().startsWith('<html') || 
-                cleanedContinuation.trim().startsWith('<HTML')) {
+            // 智能合并逻辑 - 避免重复内容（使用page.tsx中的逻辑）
+            let completeCode = fullContent;
+            
+            if (finalCleanedContinuation.trim().startsWith('<!DOCTYPE') || 
+                finalCleanedContinuation.trim().startsWith('<html') || 
+                finalCleanedContinuation.trim().startsWith('<HTML')) {
               // 如果返回的是完整HTML，尝试提取新增的部分
-              const bodyStartIdx = cleanedContinuation.indexOf('<body');
-              const bodyEndIdx = cleanedContinuation.lastIndexOf('</body>');
+              const bodyStartIdx = finalCleanedContinuation.indexOf('<body');
+              const bodyEndIdx = finalCleanedContinuation.lastIndexOf('</body>');
               
               if (bodyStartIdx !== -1 && bodyEndIdx !== -1) {
                 // 提取body内容
-                const bodyContent = cleanedContinuation.substring(
-                  cleanedContinuation.indexOf('>', bodyStartIdx) + 1,
+                const bodyContent = finalCleanedContinuation.substring(
+                  finalCleanedContinuation.indexOf('>', bodyStartIdx) + 1,
                   bodyEndIdx
                 );
                 
                 // 在现有代码的</body>前插入
-                const existingBodyEnd = fullContent.lastIndexOf('</body>');
+                const existingBodyEnd = completeCode.lastIndexOf('</body>');
                 if (existingBodyEnd !== -1) {
-                  const newContent = fullContent.substring(0, existingBodyEnd) + 
-                                   bodyContent + 
-                                   fullContent.substring(existingBodyEnd);
-                  
-                  // 检查是否有变化
-                  if (newContent === fullContent) {
-                    console.log("代码未变化，继续尝试生成");
-                    return true; // 继续尝试
-                  }
-                  
-                  fullContent = newContent;
+                  completeCode = completeCode.substring(0, existingBodyEnd) + 
+                               bodyContent + 
+                               completeCode.substring(existingBodyEnd);
                 } else {
-                  fullContent += bodyContent;
+                  completeCode += bodyContent;
                 }
               } else {
-                // 无法识别body标签，直接附加并检查是否有变化
-                if (fullContent + cleanedContinuation === fullContent) {
-                  console.log("代码未变化，继续尝试生成");
-                  return true; // 继续尝试
-                }
-                
-                fullContent += cleanedContinuation;
+                // 无法识别body标签，直接附加
+                completeCode += finalCleanedContinuation;
               }
             } else {
-              // 直接附加非完整HTML并检查是否有变化
-              if (fullContent + cleanedContinuation === fullContent) {
-                console.log("代码未变化，继续尝试生成");
-                return true; // 继续尝试
-              }
-              
-              fullContent += cleanedContinuation;
+              // 直接附加非完整HTML
+              completeCode += finalCleanedContinuation;
             }
+            
+            // 检查是否有变化
+            if (completeCode === fullContent) {
+              console.log("代码未变化，继续尝试生成");
+              return true; // 继续尝试
+            }
+            
+            fullContent = completeCode;
             
             // 检查生成的内容是否完整
             return !isHtmlComplete(fullContent);
@@ -246,32 +266,64 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        // 读取初始生成内容
+        // 第一步：初始生成（使用handleGenerate的逻辑）
+        console.log('开始初始生成...');
+        const initialStream = await providerClient.generateCode(prompt, modelToUse, systemPromptToUse, parsedMaxTokens);
+        const initialResponse = new Response(initialStream);
+        const initialReader = initialResponse.body?.getReader();
+        
+        if (!initialReader) {
+          throw new Error('无法读取初始生成流');
+        }
+        
+        let receivedText = '';
+        
+        // 读取初始生成内容（流式处理，类似page.tsx中的逻辑）
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await initialReader.read();
           
           if (done) {
             break;
           }
           
-          // 将二进制数据转换为文本并添加到完整内容
+          // 将二进制数据转换为文本并添加到接收的文本
           const textChunk = new TextDecoder().decode(value);
-          fullContent += textChunk;
+          receivedText += textChunk;
+          
+          // 处理思考块和清理代码
+          const { cleanedCode } = processThinkingAndCleanCode(receivedText);
+          
+          // 更新完整内容
+          fullContent = cleanedCode;
           
           // 发送增量更新
           controller.enqueue(value);
         }
         
-        // 清理生成的代码
-        fullContent = cleanGeneratedCode(fullContent);
+        // 第二步：判断生成结果是否完整的HTML
+        console.log('检查HTML完整性...');
+        const isComplete = isHtmlComplete(fullContent);
+        console.log(`HTML完整性检查结果: ${isComplete ? '完整' : '不完整'}`);
         
-        // 检查生成的内容是否完整，如果不完整则尝试继续生成
-        let shouldContinue = !isHtmlComplete(fullContent);
-        
-        while (shouldContinue) {
-          shouldContinue = await continueGeneration();
+        // 第三步：如果不完整，则继续生成
+        if (!isComplete) {
+          console.log('HTML不完整，开始自动继续生成...');
+          let shouldContinue = true;
+          
+          while (shouldContinue) {
+            shouldContinue = await continueGeneration();
+            
+            // 每次继续生成后重新检查完整性
+            if (shouldContinue && isHtmlComplete(fullContent)) {
+              console.log('HTML已完整，停止继续生成');
+              shouldContinue = false;
+            }
+          }
+        } else {
+          console.log('HTML已完整，无需继续生成');
         }
         
+        console.log(`生成完成，总共进行了 ${continuationAttempts} 次继续生成`);
         controller.close();
       }
     });
