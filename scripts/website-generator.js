@@ -10,14 +10,31 @@ const helpText = `
 用法: node website-generator.js [选项]
 
 选项:
-  --prompt, -p        要生成的网站描述 (必需)
-  --model, -m         要使用的AI模型 (如未提供，将使用.env.local中的DEFAULT_MODEL)
-  --provider          AI提供商 (如未提供，将使用.env.local中的DEFAULT_PROVIDER)
-  --system-prompt     自定义系统提示 (可选)
-  --max-tokens        生成的最大令牌数 (可选)
-  --output, -o        输出HTML文件路径 (可选, 默认: ./generated_website.html)
-  --api-url           API端点URL (可选, 默认: http://localhost:3000/api/website-generation)
-  --help, -h          显示此帮助信息
+  --prompt, -p                要生成的网站描述 (必需)
+  --model, -m                 要使用的AI模型 (如未提供，将使用.env.local中的DEFAULT_MODEL)
+  --provider                  AI提供商 (如未提供，将使用.env.local中的DEFAULT_PROVIDER)
+  --selected-system-prompt    系统提示模式 (default|thinking|custom，默认: default)
+  --custom-system-prompt      自定义系统提示内容 (当--selected-system-prompt为custom时使用)
+  --max-tokens                生成的最大令牌数 (可选)
+  --max-continuation-attempts 最大自动继续生成尝试次数 (可选，默认: 10)
+  --output, -o                输出HTML文件路径 (可选, 默认: ./work_dir/generated_website.html)
+  --api-url                   API端点URL (可选, 默认: http://localhost:3000/api/website-generation)
+  --help, -h                  显示此帮助信息
+
+系统提示模式说明:
+  default   - 使用默认的系统提示词
+  thinking  - 启用思考模式，AI会先进行详细思考再生成代码
+  custom    - 使用自定义系统提示词 (需配合--custom-system-prompt使用)
+
+示例:
+  # 基础使用
+  node website-generator.js --prompt "创建一个博客网站" --model "deepseek-coder-33b-instruct"
+  
+  # 使用思考模式
+  node website-generator.js --prompt "创建一个电商网站" --selected-system-prompt thinking
+  
+  # 使用自定义系统提示
+  node website-generator.js --prompt "创建艺术网站" --selected-system-prompt custom --custom-system-prompt "你是专业艺术网站设计师..."
 `;
 
 // 从环境变量获取默认值
@@ -29,9 +46,12 @@ let options = {
   prompt: null,
   model: DEFAULT_MODEL || null,
   provider: DEFAULT_PROVIDER || null,
-  systemPrompt: null,
+  systemPrompt: null, // 保留向后兼容性
+  selectedSystemPrompt: 'default',
+  customSystemPrompt: null,
   maxTokens: null,
-  output: './generated_website.html',
+  maxContinuationAttempts: null,
+  output: './work_dir/generated_website.html',
   apiUrl: 'http://localhost:3000/api/website-generation'
 };
 
@@ -49,9 +69,22 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === '--provider') {
     options.provider = args[++i];
   } else if (arg === '--system-prompt') {
+    // 保留向后兼容性，但显示警告
+    console.warn('警告: --system-prompt 已弃用，请使用 --selected-system-prompt 和 --custom-system-prompt');
     options.systemPrompt = args[++i];
+  } else if (arg === '--selected-system-prompt') {
+    const value = args[++i];
+    if (!['default', 'thinking', 'custom'].includes(value)) {
+      console.error('错误: --selected-system-prompt 必须是 default、thinking 或 custom 之一');
+      process.exit(1);
+    }
+    options.selectedSystemPrompt = value;
+  } else if (arg === '--custom-system-prompt') {
+    options.customSystemPrompt = args[++i];
   } else if (arg === '--max-tokens') {
     options.maxTokens = parseInt(args[++i], 10);
+  } else if (arg === '--max-continuation-attempts') {
+    options.maxContinuationAttempts = parseInt(args[++i], 10);
   } else if (arg === '--output' || arg === '-o') {
     options.output = args[++i];
   } else if (arg === '--api-url') {
@@ -73,12 +106,25 @@ if (!options.model) {
   process.exit(1);
 }
 
+// 验证自定义系统提示模式的参数
+if (options.selectedSystemPrompt === 'custom' && !options.customSystemPrompt) {
+  console.error('错误: 当使用 --selected-system-prompt custom 时，必须提供 --custom-system-prompt');
+  process.exit(1);
+}
+
 // 主函数
 async function generateWebsite() {
   console.log('正在生成网站...');
   console.log(`描述: ${options.prompt}`);
   console.log(`模型: ${options.model}`);
   if (options.provider) console.log(`提供商: ${options.provider}`);
+  console.log(`系统提示模式: ${options.selectedSystemPrompt}`);
+  if (options.selectedSystemPrompt === 'custom') {
+    console.log(`自定义系统提示: ${options.customSystemPrompt.substring(0, 100)}...`);
+  }
+  if (options.maxContinuationAttempts) {
+    console.log(`最大继续生成尝试次数: ${options.maxContinuationAttempts}`);
+  }
   
   try {
     // 准备请求体
@@ -89,8 +135,21 @@ async function generateWebsite() {
     
     // 添加可选参数
     if (options.provider) requestBody.provider = options.provider;
-    if (options.systemPrompt) requestBody.systemPrompt = options.systemPrompt;
+    
+    // 处理系统提示相关参数
+    if (options.systemPrompt) {
+      // 向后兼容性支持
+      requestBody.systemPrompt = options.systemPrompt;
+    } else {
+      // 使用新的系统提示模式
+      requestBody.selectedSystemPrompt = options.selectedSystemPrompt;
+      if (options.selectedSystemPrompt === 'custom' && options.customSystemPrompt) {
+        requestBody.customSystemPrompt = options.customSystemPrompt;
+      }
+    }
+    
     if (options.maxTokens) requestBody.maxTokens = options.maxTokens;
+    if (options.maxContinuationAttempts) requestBody.maxContinuationAttempts = options.maxContinuationAttempts;
     
     // 发送请求
     const response = await fetch(options.apiUrl, {
@@ -126,6 +185,7 @@ async function generateWebsite() {
     // 创建输出文件流
     const fileStream = fs.createWriteStream(outputPath);
     let contentLength = 0;
+    let lastProgressTime = Date.now();
     
     // 从响应中读取数据
     const reader = response.body;
@@ -136,19 +196,30 @@ async function generateWebsite() {
         contentLength += chunk.length;
         fileStream.write(chunk);
         
-        // 打印进度
-        process.stdout.write(`\r已接收: ${contentLength} 字节`);
+        // 每500ms更新一次进度，避免输出过于频繁
+        const now = Date.now();
+        if (now - lastProgressTime > 500) {
+          process.stdout.write(`\r已接收: ${contentLength} 字节 (${options.selectedSystemPrompt === 'thinking' ? '思考模式' : '标准模式'})`);
+          lastProgressTime = now;
+        }
       }
     });
     
     reader.on('end', () => {
       fileStream.end();
       console.log(`\n网站生成完成！已保存到: ${outputPath}`);
+      console.log(`总大小: ${contentLength} 字节`);
+      
+      // 如果是思考模式，提醒用户思考过程已被过滤
+      if (options.selectedSystemPrompt === 'thinking') {
+        console.log('注意: 思考过程已自动过滤，输出文件仅包含纯净的HTML代码');
+      }
     });
     
     reader.on('error', (err) => {
       fileStream.end();
       console.error('\n读取响应时出错:', err);
+      process.exit(1);
     });
     
   } catch (error) {

@@ -54,11 +54,13 @@ export async function POST(request: NextRequest) {
       model, 
       provider: providerParam, 
       systemPrompt, 
+      selectedSystemPrompt, // 新增：系统提示词选择模式
+      customSystemPrompt,   // 新增：自定义系统提示词
       maxTokens,
       apiKey,
       continuationMode = false,
       existingCode = '',
-      maxContinuationAttempts = 10  // 最大继续生成尝试次数
+      maxContinuationAttempts = 10
     } = await request.json();
 
     // 验证必需的参数
@@ -107,8 +109,25 @@ export async function POST(request: NextRequest) {
     // 创建提供商客户端
     const providerClient = createProviderClient(provider);
 
-    // 使用自定义系统提示或默认提示
-    const systemPromptToUse = systemPrompt || SYSTEM_PROMPT;
+    // 根据模式确定系统提示词（参考page.tsx的逻辑）
+    let systemPromptToUse: string | null = null;
+    
+    if (selectedSystemPrompt === 'custom' && customSystemPrompt) {
+      // 使用自定义系统提示词
+      systemPromptToUse = customSystemPrompt;
+    } else if (selectedSystemPrompt === 'thinking') {
+      // 使用thinking模式的系统提示词
+      systemPromptToUse = `You are an expert web developer AI. Your task is to generate a single, self-contained HTML file based on the user's prompt.
+First, before generating any code, you MUST articulate your detailed thinking process. Enclose this entire process within <think> and </think> tags. This thinking process should cover your interpretation of the user's core request and objectives; your planned HTML structure including key elements and semantic organization; your CSS styling strategy detailing the general approach, specific techniques, or frameworks considered (for example, if Tailwind CSS is requested or appropriate); and your JavaScript logic, outlining intended functionality, event handling, and DOM manipulation strategy. Furthermore, critically consider any external resources: if the request implies or mentions external libraries or frameworks such as React, Vue, Three.js, Tailwind CSS, Google Fonts, or icon sets, you must assess if using them via a CDN is appropriate for this specific request, providing a brief justification (e.g., ease of use, versioning, performance benefits/drawbacks for a single file). If a CDN is not chosen, or if the library is small, briefly explain the alternative, such as embedding or using vanilla JS/CSS for simpler tasks.
+Only after this complete <think> block, proceed to generate the code. The HTML file must include all necessary HTML structure, CSS styles within <style> tags in the <head>, and JavaScript code within <script> tags, preferably at the end of the <body>.
+IMPORTANT: Apart from the initial <think>...</think> block, do NOT use markdown formatting. Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself, starting with <!DOCTYPE html> and ending with </html>. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.`;
+    } else if (systemPrompt) {
+      // 使用传递的系统提示词
+      systemPromptToUse = systemPrompt;
+    } else {
+      // 使用默认系统提示词
+      systemPromptToUse = SYSTEM_PROMPT;
+    }
 
     // 创建新的流来处理完整性检查和自动继续生成
     const processedStream = new ReadableStream({
@@ -118,46 +137,52 @@ export async function POST(request: NextRequest) {
         let thinkingOutput = '';
         let isInThinkingBlock = false;
         
+        // 判断是否为thinking模式
+        const isThinkingMode = selectedSystemPrompt === 'thinking';
+        
         // 辅助函数：处理思考块和清理代码（从page.tsx移植）
         function processThinkingAndCleanCode(receivedText: string) {
           let cleanedCode = receivedText;
           let extractedThinking = '';
 
-          // 检查思考块
-          const thinkingStartIndex = cleanedCode.indexOf("<think>");
-          const thinkingEndIndex = cleanedCode.indexOf("</think>");
+          // 只在thinking模式下处理思考块
+          if (isThinkingMode) {
+            // 检查思考块
+            const thinkingStartIndex = cleanedCode.indexOf("<think>");
+            const thinkingEndIndex = cleanedCode.indexOf("</think>");
 
-          if (thinkingStartIndex !== -1) {
-            isInThinkingBlock = true;
+            if (thinkingStartIndex !== -1) {
+              isInThinkingBlock = true;
 
-            // 提取思考内容
-            if (thinkingEndIndex !== -1) {
-              // 完整的思考块
-              extractedThinking = cleanedCode.substring(thinkingStartIndex + 7, thinkingEndIndex);
+              // 提取思考内容
+              if (thinkingEndIndex !== -1) {
+                // 完整的思考块
+                extractedThinking = cleanedCode.substring(thinkingStartIndex + 7, thinkingEndIndex);
+
+                // 从代码中移除思考块
+                cleanedCode = cleanedCode.substring(0, thinkingStartIndex) +
+                              cleanedCode.substring(thinkingEndIndex + 8);
+
+                isInThinkingBlock = false;
+              } else {
+                // 部分思考块
+                extractedThinking = cleanedCode.substring(thinkingStartIndex + 7);
+
+                // 从代码中移除部分思考块
+                cleanedCode = cleanedCode.substring(0, thinkingStartIndex);
+              }
+
+              thinkingOutput += extractedThinking;
+            } else if (isInThinkingBlock && thinkingEndIndex !== -1) {
+              // 思考块结束
+              extractedThinking = cleanedCode.substring(0, thinkingEndIndex);
 
               // 从代码中移除思考块
-              cleanedCode = cleanedCode.substring(0, thinkingStartIndex) +
-                            cleanedCode.substring(thinkingEndIndex + 8);
+              cleanedCode = cleanedCode.substring(thinkingEndIndex + 8);
 
               isInThinkingBlock = false;
-            } else {
-              // 部分思考块
-              extractedThinking = cleanedCode.substring(thinkingStartIndex + 7);
-
-              // 从代码中移除部分思考块
-              cleanedCode = cleanedCode.substring(0, thinkingStartIndex);
+              thinkingOutput += extractedThinking;
             }
-
-            thinkingOutput += extractedThinking;
-          } else if (isInThinkingBlock && thinkingEndIndex !== -1) {
-            // 思考块结束
-            extractedThinking = cleanedCode.substring(0, thinkingEndIndex);
-
-            // 从代码中移除思考块
-            cleanedCode = cleanedCode.substring(thinkingEndIndex + 8);
-
-            isInThinkingBlock = false;
-            thinkingOutput += extractedThinking;
           }
 
           // 移除markdown格式
@@ -180,7 +205,15 @@ export async function POST(request: NextRequest) {
           try {
             // 构建继续生成的提示（使用page.tsx中的逻辑）
             const continuationPrompt = `继续按照原始需求完成以下HTML代码，保持一致的风格和结构。\n\n${fullContent}`;
-            const continuationSystemPrompt = `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.\n原始需求：\n\n${prompt}\n\n`;
+            
+            // 根据模式构建继续生成的系统提示词
+            let continuationSystemPrompt: string;
+            
+            if (isThinkingMode) {
+              continuationSystemPrompt = `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file, unless the CDN consideration in your <think> block justifies linking to an external CDN for a specific library/framework.\n原始需求：\n\n${prompt}\n\n`;
+            } else {
+              continuationSystemPrompt = `你是一位专业网页开发者。请继续完成用户提供的不完整代码。只输出继续的代码部分，不要重新开始。确保生成的代码可以正确衔接已有内容。 Do NOT wrap the code in \`\`\`html and \`\`\` tags. Do NOT output any text or explanation before or after the HTML code. Only output the raw HTML code itself. Ensure the generated CSS and JavaScript are directly embedded in the HTML file.\n原始需求：\n\n${prompt}\n\n`;
+            }
             
             // 生成继续的代码
             const continuationStream = await providerClient.generateCode(continuationPrompt, modelToUse, continuationSystemPrompt, parsedMaxTokens);
@@ -267,7 +300,7 @@ export async function POST(request: NextRequest) {
         }
         
         // 第一步：初始生成（使用handleGenerate的逻辑）
-        console.log('开始初始生成...');
+        console.log(`开始初始生成... (模式: ${isThinkingMode ? 'thinking' : 'normal'})`);
         const initialStream = await providerClient.generateCode(prompt, modelToUse, systemPromptToUse, parsedMaxTokens);
         const initialResponse = new Response(initialStream);
         const initialReader = initialResponse.body?.getReader();
