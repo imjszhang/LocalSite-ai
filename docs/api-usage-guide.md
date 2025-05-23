@@ -19,10 +19,13 @@ LocalSite AI 提供了一个完整的网站生成 API，使外部应用程序能
 | prompt | string | 是 | 描述所需网站的文本提示 |
 | model | string | 是 | 要使用的 AI 模型名称 |
 | provider | string | 否 | AI 提供商（deepseek, openai_compatible, ollama, lm_studio） |
-| systemPrompt | string | 否 | 自定义系统提示，覆盖默认提示 |
+| systemPrompt | string | 否 | 自定义系统提示，覆盖默认提示（已弃用，建议使用selectedSystemPrompt） |
 | selectedSystemPrompt | string | 否 | 系统提示模式选择（'default', 'thinking', 'custom'） |
 | customSystemPrompt | string | 否 | 自定义系统提示内容（当selectedSystemPrompt为'custom'时使用） |
 | maxTokens | number | 否 | 生成的最大令牌数 |
+| apiKey | string | 否 | API密钥（如果需要） |
+| continuationMode | boolean | 否 | 是否为继续生成模式（默认：false） |
+| existingCode | string | 否 | 现有代码（在continuationMode为true时使用） |
 | maxContinuationAttempts | number | 否 | 最大自动继续生成尝试次数（默认：10） |
 
 ### 系统提示模式
@@ -79,8 +82,15 @@ async function generateWebsite(prompt, model, options = {}) {
 
     // 检查响应状态
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || '生成网站时出错');
+      let errorMessage = '生成网站时出错';
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (e) {
+        // 如果响应不是JSON，使用状态文本
+        errorMessage = `HTTP错误: ${response.status} ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
 
     // 处理流式响应
@@ -166,7 +176,8 @@ import requests
 import json
 
 def generate_website(prompt, model, provider=None, selected_system_prompt=None, 
-                    custom_system_prompt=None, max_tokens=None, max_continuation_attempts=None):
+                    custom_system_prompt=None, max_tokens=None, max_continuation_attempts=None,
+                    api_key=None, continuation_mode=False, existing_code=''):
     """
     使用 LocalSite AI API 生成网站并处理流式响应
     
@@ -178,6 +189,9 @@ def generate_website(prompt, model, provider=None, selected_system_prompt=None,
         custom_system_prompt (str, optional): 自定义系统提示内容
         max_tokens (int, optional): 生成的最大令牌数
         max_continuation_attempts (int, optional): 最大自动继续生成尝试次数
+        api_key (str, optional): API密钥
+        continuation_mode (bool, optional): 是否为继续生成模式
+        existing_code (str, optional): 现有代码
     
     返回:
         str: 生成的 HTML 代码
@@ -200,6 +214,12 @@ def generate_website(prompt, model, provider=None, selected_system_prompt=None,
         payload["maxTokens"] = max_tokens
     if max_continuation_attempts:
         payload["maxContinuationAttempts"] = max_continuation_attempts
+    if api_key:
+        payload["apiKey"] = api_key
+    if continuation_mode:
+        payload["continuationMode"] = continuation_mode
+    if existing_code:
+        payload["existingCode"] = existing_code
     
     try:
         # 发送请求并获取流式响应
@@ -207,8 +227,12 @@ def generate_website(prompt, model, provider=None, selected_system_prompt=None,
         
         # 检查错误
         if response.status_code != 200:
-            error_data = response.json()
-            raise Exception(error_data.get("error", "生成网站时出错"))
+            try:
+                error_data = response.json()
+                raise Exception(error_data.get("error", "生成网站时出错"))
+            except ValueError:
+                # 如果响应不是JSON
+                raise Exception(f"HTTP错误: {response.status_code} {response.reason}")
         
         # 处理流式响应
         result = ""
@@ -305,6 +329,22 @@ generateWebsite(
 );
 ```
 
+### 继续生成模式
+
+您可以基于现有代码继续生成：
+
+```javascript
+generateWebsite(
+  '继续完成这个网站',
+  'deepseek-coder-33b-instruct',
+  {
+    provider: 'deepseek',
+    continuationMode: true,
+    existingCode: '<!DOCTYPE html><html><head>...'
+  }
+);
+```
+
 ### 长内容生成示例
 
 ```bash
@@ -325,9 +365,11 @@ node scripts/website-generator.js \
 
 ## 注意事项
 
-1. **思考模式**：在思考模式下，生成时间可能会更长，但通常能产生更高质量的代码。
-2. **自动继续生成**：API 会自动检测生成的 HTML 是否完整，如果不完整会自动继续生成。
+1. **思考模式**：在思考模式下，生成时间可能会更长，但通常能产生更高质量的代码。思考过程会被自动过滤，只返回纯净的HTML代码。
+2. **自动继续生成**：API 会自动检测生成的 HTML 是否完整，如果不完整会自动继续生成，最多尝试 `maxContinuationAttempts` 次（默认10次）。
 3. **流式响应**：使用流式响应可以提供更好的用户体验，让用户看到实时生成的内容。
-4. **错误处理**：对于生产环境，建议实现适当的错误处理和重试机制。
+4. **错误处理**：对于生产环境，建议实现适当的错误处理和重试机制。响应可能是JSON格式的错误信息，也可能是HTTP状态错误。
 5. **本地模型**：如果使用本地模型（Ollama 或 LM Studio），确保这些服务在调用 API 时正在运行。
-6. **令牌限制**：对于复杂的网站，可能需要增加 `maxTokens` 参数以确保生成完整的内容。 
+6. **令牌限制**：对于复杂的网站，可能需要增加 `maxTokens` 参数以确保生成完整的内容。
+7. **继续生成模式**：API支持继续生成模式，可以基于现有代码继续生成内容。
+8. **系统提示兼容性**：`systemPrompt` 参数仍然支持但已弃用，建议使用 `selectedSystemPrompt` 和 `customSystemPrompt` 的组合。 
