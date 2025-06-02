@@ -1,5 +1,47 @@
 // LocalSite AI API 测试脚本
-const API_BASE_URL = 'http://localhost:3000'; // 根据您的实际部署地址修改
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const API_BASE_URL = 'http://localsite-ai.localhost'; // 根据您的实际部署地址修改
+
+/**
+ * 处理localhost域名的URL，将其转换为实际可访问的地址
+ * @param {string} url - 原始URL
+ * @returns {Object} - 包含处理后的主机名和原始主机名的对象
+ */
+function processLocalhostUrl(url) {
+  const urlObj = new URL(url);
+  const actualHostname = urlObj.hostname.endsWith('.localhost') ? '127.0.0.1' : urlObj.hostname;
+  
+  return {
+    urlObj,
+    actualHostname,
+    originalHostname: urlObj.hostname,
+    port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80)
+  };
+}
+
+/**
+ * 创建适配localhost域名的fetch选项
+ * @param {string} url - 要访问的URL
+ * @param {Object} options - 原始fetch选项
+ * @returns {Array} - [处理后的URL, 更新后的选项]
+ */
+function createLocalhostFetchOptions(url, options = {}) {
+  const { urlObj, actualHostname, originalHostname, port } = processLocalhostUrl(url);
+  
+  // 构建实际访问的URL
+  const actualUrl = `${urlObj.protocol}//${actualHostname}:${port}${urlObj.pathname}${urlObj.search}`;
+  
+  // 更新headers，保持原始域名作为Host头
+  const updatedOptions = {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Host': originalHostname
+    }
+  };
+  
+  return [actualUrl, updatedOptions];
+}
 
 /**
  * 测试网站生成API
@@ -13,18 +55,15 @@ async function testWebsiteGeneration() {
       name: '基础网站生成',
       config: {
         prompt: '创建一个简单的个人博客首页，包含导航栏、文章列表和页脚',
-        model: 'deepseek-coder-33b-instruct',
-        provider: 'deepseek',
-        selectedSystemPrompt: 'default'
+        selectedSystemPrompt: 'default',
       }
     },
     {
       name: '思考模式生成',
       config: {
         prompt: '创建一个现代化的作品集网站，带有响应式设计和深色主题',
-        model: 'deepseek-coder-33b-instruct',
-        provider: 'deepseek',
         selectedSystemPrompt: 'thinking',
+
         maxTokens: 4000
       }
     },
@@ -32,10 +71,9 @@ async function testWebsiteGeneration() {
       name: '自定义系统提示',
       config: {
         prompt: '创建一个简单的登录页面',
-        model: 'deepseek-coder-33b-instruct',
-        provider: 'deepseek',
         selectedSystemPrompt: 'custom',
-        customSystemPrompt: '你是一个专业的前端开发者。请生成一个使用Tailwind CSS的现代化登录页面，包含用户名、密码输入框和登录按钮。页面应该居中显示且具有良好的视觉效果。'
+        customSystemPrompt: '你是一个专业的前端开发者。请生成一个使用Tailwind CSS的现代化登录页面，包含用户名、密码输入框和登录按钮。页面应该居中显示且具有良好的视觉效果。',
+
       }
     }
   ];
@@ -80,13 +118,16 @@ async function generateWebsite(config) {
   try {
     console.log('🔄 正在发送请求...');
     
-    const response = await fetch(url, {
+    // 使用localhost处理函数
+    const [actualUrl, fetchOptions] = createLocalhostFetchOptions(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(config)
     });
+
+    const response = await fetch(actualUrl, fetchOptions);
 
     if (!response.ok) {
       let errorMessage = '生成网站时出错';
@@ -100,31 +141,41 @@ async function generateWebsite(config) {
     }
 
     // 处理流式响应
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
     let result = '';
-    let chunkCount = 0;
+    let contentLength = 0;
+    let lastProgressTime = Date.now();
 
     console.log('📡 正在接收流式响应...');
 
-    while (true) {
-      const { done, value } = await reader.read();
+    // 使用Node.js流处理方式
+    const reader = response.body;
+    
+    return new Promise((resolve, reject) => {
+      reader.on('readable', () => {
+        let chunk;
+        while (null !== (chunk = reader.read())) {
+          const chunkText = chunk.toString();
+          result += chunkText;
+          contentLength += chunk.length;
+          
+          // 每500ms更新一次进度
+          const now = Date.now();
+          if (now - lastProgressTime > 500) {
+            process.stdout.write(`\r📊 已接收: ${contentLength} 字节，当前长度: ${result.length} 字符`);
+            lastProgressTime = now;
+          }
+        }
+      });
       
-      if (done) {
-        break;
-      }
+      reader.on('end', () => {
+        console.log(`\n✨ 流式响应完成，总大小: ${contentLength} 字节`);
+        resolve(result);
+      });
       
-      result += decoder.decode(value, { stream: true });
-      chunkCount++;
-      
-      // 显示进度
-      if (chunkCount % 10 === 0) {
-        process.stdout.write(`\r📊 已接收 ${chunkCount} 个数据块，当前长度: ${result.length} 字符`);
-      }
-    }
-
-    console.log(`\n✨ 流式响应完成，共接收 ${chunkCount} 个数据块`);
-    return result;
+      reader.on('error', (err) => {
+        reject(err);
+      });
+    });
 
   } catch (error) {
     console.error('🚨 API调用失败:', error.message);
@@ -140,7 +191,7 @@ async function saveToFile(filename, content) {
   const path = require('path');
   
   // 确保输出目录存在
-  const outputDir = './test-output';
+  const outputDir = './work_dir/test-output';
   try {
     await fs.mkdir(outputDir, { recursive: true });
   } catch (e) {
